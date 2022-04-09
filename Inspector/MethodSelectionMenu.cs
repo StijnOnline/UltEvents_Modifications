@@ -6,8 +6,11 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
+using System.Linq;
 using UnityEditor;
+using UnityEditor.IMGUI.Controls;
 using UnityEngine;
+using static UnityEditor.GenericMenu;
 using Object = UnityEngine.Object;
 
 namespace UltEvents.Editor
@@ -17,6 +20,125 @@ namespace UltEvents.Editor
     /// </summary>
     internal static class MethodSelectionMenu
     {
+
+        public class EventDropDownMenu : AdvancedDropdown
+        {
+            public CustomDropDownItem root = new CustomDropDownItem("Methods");
+            public Vector2 minimumSize
+            {
+                get
+                {
+                    return base.minimumSize;
+                }
+                set
+                {
+                    base.minimumSize = value;
+                }
+            }
+            public EventDropDownMenu(AdvancedDropdownState state) : base(state)
+            {
+            }
+
+            protected override AdvancedDropdownItem BuildRoot()
+            {
+                return root;
+            }
+
+            protected override void ItemSelected(AdvancedDropdownItem i)
+            {
+                CustomDropDownItem item = (CustomDropDownItem)i;
+                if (item == null)
+                {
+                    Debug.LogError("UltEvents Select Error");
+                    return;
+                }
+
+                if (item.func != null)
+                {
+                    item.func.Invoke();
+                }
+                if (item.func2 != null)
+                {
+                    item.func2.Invoke(item.userData);
+                }
+
+            }
+        }
+
+        public class CustomDropDownItem : AdvancedDropdownItem
+        {
+            public CustomDropDownItem parent;
+
+            public MenuFunction func;
+            public MenuFunction2 func2;
+            public object userData;
+            public bool subMenuGenerated;//really messy for now
+
+            public CustomDropDownItem(string name, MenuFunction func = null, bool enabled = true) : base(name)
+            {
+                this.enabled = enabled;
+                this.func = func;
+            }
+            public CustomDropDownItem(string name, MenuFunction2 func2, object userData = null, bool enabled = true) : base(name)
+            {
+                this.enabled = enabled;
+                this.func2 = func2;
+                this.userData = userData;
+            }
+
+            public void AddChild(CustomDropDownItem child)
+            {
+                child.parent = this;
+                base.AddChild(child);
+            }
+
+            /// <summary>
+            /// Adds an Item and enables all its parents
+            /// </summary>
+            /// <param name="child"></param>
+            public void AddItem(CustomDropDownItem child)
+            {
+                AddChild(child);
+                CustomDropDownItem parent = this;
+                while (parent != null)
+                {
+                    if (parent.enabled) break;
+                    parent.enabled = true;
+                    parent = parent.parent;
+                }
+            }
+
+            public CustomDropDownItem GetOrCreateSubMenu(string name, bool enabled = true)
+            {
+                foreach (var child in children)
+                {
+                    if (child.name == name) return (CustomDropDownItem)child;
+                }
+                CustomDropDownItem subItem = new CustomDropDownItem(name, enabled: enabled);
+                AddChild(subItem);
+                return subItem;
+            }
+
+            public void AddSeperator()
+            {
+                var last = children.Last();
+                if (last.name != "SEPARATOR") AddSeparator();
+            }
+
+            public bool HasSubItem(string name)
+            {
+                foreach (var child in children)
+                {
+                    if (child.name == name)
+                        return true;
+                }
+                return false;
+            }
+        }
+
+
+
+
         /************************************************************************************************************************/
         #region Fields
         /************************************************************************************************************************/
@@ -28,13 +150,11 @@ namespace UltEvents.Editor
         private static readonly DrawerState
             CachedState = new DrawerState();
 
-        private static readonly StringBuilder
-            LabelBuilder = new StringBuilder();
 
         // These fields should really be passed around as parameters, but they make all the method signatures annoyingly long.
         private static MethodBase _CurrentMethod;
         private static BindingFlags _Bindings;
-        private static GenericMenu _Menu;
+        private static EventDropDownMenu _Menu;
 
         /************************************************************************************************************************/
         #endregion
@@ -49,9 +169,9 @@ namespace UltEvents.Editor
 
             _CurrentMethod = CachedState.call.GetMethodSafe();
             _Bindings = GetBindingFlags();
-            _Menu = new GenericMenu();
-
-            BoolPref.AddDisplayOptions(_Menu);
+            _Menu = new EventDropDownMenu(new AdvancedDropdownState());
+            _Menu.minimumSize = new Vector2(300f, 300f);
+            //BoolPref.AddDisplayOptions(_Menu);
 
             Object[] targetObjects;
             var targets = GetObjectReferences(CachedState.TargetProperty, out targetObjects);
@@ -90,16 +210,17 @@ namespace UltEvents.Editor
 
                 // Add menu items according to the type of the target.
                 if (firstTarget is GameObject)
-                    PopulateMenuForGameObject("", false, targets);
+                    PopulateMenuForGameObject(false, targets);
                 else if (firstTarget is Component)
                     PopulateMenuForComponent(targets);
                 else
                     PopulateMenuForObject(targets);
             }
 
-            ShowMenu:
+        ShowMenu:
 
-            _Menu.DropDown(area);
+
+            _Menu.Show(area);
 
             GC.Collect();
         }
@@ -110,7 +231,7 @@ namespace UltEvents.Editor
         {
             var bindings = BindingFlags.Public | BindingFlags.Instance;
 
-            if (BoolPref.ShowNonPublicMethods)
+            if (BoolPref.ShowNonPublics)
                 bindings |= BindingFlags.NonPublic;
 
             if (BoolPref.ShowStaticMethods)
@@ -123,7 +244,7 @@ namespace UltEvents.Editor
 
         private static void AddCoreItems(Object[] targets)
         {
-            _Menu.AddItem(new GUIContent("Null"), _CurrentMethod == null, () =>
+            _Menu.root.AddItem(new CustomDropDownItem("Null", () =>
             {
                 DrawerState.Current.CopyFrom(CachedState);
 
@@ -147,22 +268,20 @@ namespace UltEvents.Editor
                 }
 
                 DrawerState.Current.Clear();
-            });
+            }, _CurrentMethod == null));
 
             var isStatic = _CurrentMethod != null && _CurrentMethod.IsStatic;
             if (targets != null && !isStatic)
             {
-                _Menu.AddItem(new GUIContent("Static Method"), isStatic, () =>
+                _Menu.root.AddItem(new CustomDropDownItem("Static Method", () =>
                 {
                     DrawerState.Current.CopyFrom(CachedState);
 
                     PersistentCallDrawer.SetTarget(null);
 
                     DrawerState.Current.Clear();
-                });
+                }, isStatic));
             }
-
-            _Menu.AddSeparator("");
         }
 
         /************************************************************************************************************************/
@@ -238,6 +357,7 @@ namespace UltEvents.Editor
         #endregion
         /************************************************************************************************************************/
         #region Populate for Objects
+
         /************************************************************************************************************************/
 
         private static void PopulateMenuWithStatics(Object[] targets, Type type)
@@ -247,50 +367,37 @@ namespace UltEvents.Editor
             if (!ReferenceEquals(component, null))
             {
                 var gameObjects = GetRelatedObjects(targets, (target) => (target as Component).gameObject);
-                PopulateMenuForGameObject("", true, gameObjects);
+                PopulateMenuForGameObject(true, gameObjects);
             }
             else
             {
-                PopulateMenuForObject(firstTarget.GetType().GetNameCS(BoolPref.ShowFullTypeNames) + " ->/", targets);
+                PopulateMenuForObject(targets);
             }
-
-            _Menu.AddSeparator("");
 
             var bindings = BindingFlags.Static | BindingFlags.Public;
-            if (BoolPref.ShowNonPublicMethods)
+            if (BoolPref.ShowNonPublics)
                 bindings |= BindingFlags.NonPublic;
 
-            PopulateMenuWithMembers(type, bindings, "", null);
+            PopulateMenuWithMembers(type, bindings, null);
         }
 
         /************************************************************************************************************************/
 
-        private static void PopulateMenuForGameObject(string prefix, bool putGameObjectInSubMenu, Object[] targets)
+        private static void PopulateMenuForGameObject(bool putGameObjectInSubMenu, Object[] targets)
         {
-            var header = new GUIContent(prefix + "Selected GameObject and its Components");
 
-            var gameObjectPrefix = prefix;
-            if (putGameObjectInSubMenu)
+            PopulateMenuForObject(targets);
+
+            if (BoolPref.ShowAllComponents)
             {
-                _Menu.AddDisabledItem(header);
-                gameObjectPrefix += "GameObject ->/";
+                var gameObjects = GetRelatedObjects(targets, (target) => target as GameObject);
+                PopulateMenuForComponents(gameObjects);
             }
-
-            PopulateMenuForObject(gameObjectPrefix, targets);
-
-            if (!putGameObjectInSubMenu)
-            {
-                _Menu.AddSeparator(prefix);
-                _Menu.AddDisabledItem(header);
-            }
-
-            var gameObjects = GetRelatedObjects(targets, (target) => target as GameObject);
-            PopulateMenuForComponents(prefix, gameObjects);
         }
 
         /************************************************************************************************************************/
 
-        private static void PopulateMenuForComponents(string prefix, GameObject[] gameObjects)
+        private static void PopulateMenuForComponents(GameObject[] gameObjects)
         {
             var firstGameObject = gameObjects[0];
             var components = firstGameObject.GetComponents<Component>();
@@ -324,15 +431,17 @@ namespace UltEvents.Editor
                         minTypeCount = typeCount;
                 }
 
-                var name = type.GetNameCS(BoolPref.ShowFullTypeNames) + " ->/";
-
                 if (minTypeCount > 1)
-                    name = UltEventUtils.GetPlacementName(typeIndex) + " " + name;
-
-                PopulateMenuForObject(prefix + name, targets);
+                {
+                    PopulateMenuForObject(targets, typeIndex);
+                }
+                else
+                {
+                    PopulateMenuForObject(targets);
+                }
             }
 
-            NextComponent:;
+        NextComponent:;
         }
 
         private static int GetComponentTypeIndex(Component component, Component[] components, out Type type)
@@ -378,22 +487,16 @@ namespace UltEvents.Editor
         {
             var gameObjects = GetRelatedObjects(targets, (target) => (target as Component).gameObject);
 
-            PopulateMenuForGameObject("", true, gameObjects);
-            _Menu.AddSeparator("");
+            PopulateMenuForGameObject(true, gameObjects);
 
             PopulateMenuForObject(targets);
         }
 
         /************************************************************************************************************************/
 
-        private static void PopulateMenuForObject(Object[] targets)
+        private static void PopulateMenuForObject(Object[] targets, int index = -1)
         {
-            PopulateMenuForObject("", targets);
-        }
-
-        private static void PopulateMenuForObject(string prefix, Object[] targets)
-        {
-            PopulateMenuWithMembers(targets[0].GetType(), _Bindings, prefix, targets);
+            PopulateMenuWithMembers(targets[0].GetType(), _Bindings, targets, index);
         }
 
         /************************************************************************************************************************/
@@ -402,15 +505,11 @@ namespace UltEvents.Editor
         #region Populate for Types
         /************************************************************************************************************************/
 
-        private static void PopulateMenuWithMembers(Type type, BindingFlags bindings, string prefix, Object[] targets)
+        private static void PopulateMenuWithMembers(Type type, BindingFlags bindings, Object[] targets, int typeIndex = -1)
         {
             var members = GetSortedMembers(type, bindings);
             var previousDeclaringType = type;
 
-            var firstSeparator = true;
-            var firstProperty = true;
-            var firstMethod = true;
-            var firstBaseType = true;
             var nameMatchesNextMethod = false;
 
             var i = 0;
@@ -420,58 +519,62 @@ namespace UltEvents.Editor
                 MethodInfo getter;
                 var member = GetNextSupportedMember(members, ref i, out parameters, out getter);
 
-                GotMember:
+            GotMember:
 
                 if (member == null)
                     return;
 
+
                 i++;
-
-                if (BoolPref.SubMenuForEachBaseType)
-                {
-                    if (firstBaseType && member.DeclaringType != type)
-                    {
-                        if (firstSeparator)
-                            firstSeparator = false;
-                        else
-                            _Menu.AddSeparator(prefix);
-
-                        var baseTypesOf = "Base Types of " + type.GetNameCS();
-                        if (BoolPref.SubMenuForBaseTypes)
-                        {
-                            prefix += baseTypesOf + " ->/";
-                        }
-                        else
-                        {
-                            _Menu.AddDisabledItem(new GUIContent(prefix + baseTypesOf));
-                        }
-                        firstProperty = false;
-                        firstMethod = false;
-                        firstBaseType = false;
-                    }
-
-                    if (previousDeclaringType != member.DeclaringType)
-                    {
-                        previousDeclaringType = member.DeclaringType;
-                        firstProperty = true;
-                        firstMethod = true;
-                        firstSeparator = true;
-                    }
-                }
 
                 var property = member as PropertyInfo;
                 if (property != null)
                 {
-                    AppendGroupHeader(prefix, "Properties in ", member.DeclaringType, type, ref firstProperty, ref firstSeparator);
 
-                    AddSelectPropertyItem(prefix, targets, type, property, getter);
+                    string label = property.PropertyType.GetNameCS(BoolPref.ShowFullTypeNames);
+                    label += ' ';
+                    label += property.Name;
+
+                    var defaultMethod = getter;
+
+                    MethodInfo setter = null;
+                    if (IsSupported(property.PropertyType))
+                    {
+                        setter = property.GetSetMethod(true);
+                        if (setter != null)
+                            defaultMethod = setter;
+                    }
+
+                    // Get and Set.
+                    label += " { ";
+                    if (getter != null) label += "get; ";
+                    if (setter != null) label += "set; ";
+                    label += '}';
+
+                    //Header
+                    if (BoolPref.ShowHeader) GetDropDownParent(type, property, typeIndex).GetOrCreateSubMenu("Properties", false);
+
+                    AddSetCallItem(GetDropDownParent(type, property, typeIndex), defaultMethod, targets, label);
+
+                    //Add seperator after last Property
+                    ParameterInfo[] nextParameters;
+                    MethodInfo nextGetter;
+                    var nextMember = GetNextSupportedMember(members, ref i, out nextParameters, out nextGetter);
+                    if (!BoolPref.GroupMethods && !BoolPref.GroupProperties &&
+                        (nextMember.MemberType != MemberTypes.Property ||
+                        (BoolPref.ShowNonPublics && BoolPref.GroupNonPublics && !IsPublic(nextMember))))
+                    {
+                        GetDropDownParent(type, property, typeIndex).AddSeperator();
+                    }
+
                     continue;
                 }
 
                 var method = member as MethodBase;
                 if (method != null)
                 {
-                    AppendGroupHeader(prefix, "Methods in ", member.DeclaringType, type, ref firstMethod, ref firstSeparator);
+
+                    string methodSignature = GetMethodSignature(method, parameters, true);
 
                     // Check if the method name matched the previous or next method to group them.
                     if (BoolPref.GroupMethodOverloads)
@@ -486,7 +589,10 @@ namespace UltEvents.Editor
 
                         if (nameMatchedPreviousMethod || nameMatchesNextMethod)
                         {
-                            AddSelectMethodItem(prefix, targets, type, true, method, parameters);
+                            //Header
+                            if (BoolPref.ShowHeader) GetDropDownParent(type, method, typeIndex).GetOrCreateSubMenu("Methods", false);
+
+                            AddSetCallItem(GetDropDownParent(type, method, typeIndex, true), method, targets, methodSignature);
 
                             if (i < members.Count)
                             {
@@ -503,125 +609,191 @@ namespace UltEvents.Editor
                     }
 
                     // Otherwise just build the label normally.
-                    AddSelectMethodItem(prefix, targets, type, false, method, parameters);
+
+                    //Header
+                    if (BoolPref.ShowHeader) GetDropDownParent(type, method, typeIndex).GetOrCreateSubMenu("Methods", false);
+
+                    AddSetCallItem(GetDropDownParent(type, method, typeIndex), method, targets, methodSignature);
                 }
             }
         }
 
         /************************************************************************************************************************/
 
-        private static void AppendGroupHeader(string prefix, string name, Type declaringType, Type currentType, ref bool firstInGroup, ref bool firstSeparator)
+        private static CustomDropDownItem GetDropDownParent(Type type, MethodBase method, int typeIndex, bool hasOverloads = false)
         {
-            if (firstInGroup)
-            {
-                LabelBuilder.Length = 0;
-                LabelBuilder.Append(prefix);
 
-                if (BoolPref.SubMenuForEachBaseType && declaringType != currentType)
-                    AppendDeclaringTypeSubMenu(LabelBuilder, declaringType, currentType);
+            CustomDropDownItem root = _Menu.root;
+            CustomDropDownItem parent = root;
 
-                if (firstSeparator)
-                    firstSeparator = false;
-                else
-                    _Menu.AddSeparator(LabelBuilder.ToString());
-
-                LabelBuilder.Append(name);
-
-                if (BoolPref.SubMenuForEachBaseType)
-                    LabelBuilder.Append(declaringType.GetNameCS());
-                else
-                    LabelBuilder.Append(currentType.GetNameCS());
-
-                _Menu.AddDisabledItem(new GUIContent(LabelBuilder.ToString()));
-                firstInGroup = false;
+            string name = type.GetNameCS();
+            if (typeIndex >= 0)
+            { //< 0 means only component (0 means 1st of multiple)
+                name += $" {UltEventUtils.GetPlacementName(typeIndex)}";
             }
+            parent = parent.GetOrCreateSubMenu(name);
+            if (BoolPref.SubMenuForEachBaseType) parent = parent.GetOrCreateSubMenu(method.DeclaringType.Name);
+
+            //Ensure submenu's are created beforehand
+
+            CreateSubMenus(parent);
+
+
+
+
+            if (BoolPref.ShowStaticMethods && method.IsStatic)
+            {
+                parent = parent.GetOrCreateSubMenu("Static");
+            }
+            if (BoolPref.GroupMethods)
+            {
+                parent = parent.GetOrCreateSubMenu("Methods");
+            }
+            if (BoolPref.GroupNonPublics && !IsPublic(method))
+            {
+                parent = parent.GetOrCreateSubMenu("Non-Public Methods");
+            }
+            if (BoolPref.GroupMethodOverloads && hasOverloads)
+            {
+                parent = parent.GetOrCreateSubMenu(method.Name);
+            }
+
+            return parent;
+        }
+        private static CustomDropDownItem GetDropDownParent(Type type, PropertyInfo property, int typeIndex)
+        {
+
+            CustomDropDownItem root = _Menu.root;
+            CustomDropDownItem parent = root;
+
+            string name = type.GetNameCS();
+            if (typeIndex >= 0)
+            { //< 0 means only component (0 means 1st of multiple)
+                name += $" {UltEventUtils.GetPlacementName(typeIndex)}";
+            }
+            parent = parent.GetOrCreateSubMenu(name);
+            if (BoolPref.SubMenuForEachBaseType) parent = parent.GetOrCreateSubMenu(property.DeclaringType.Name);
+
+            //Ensure submenu's are created beforehand
+
+            CreateSubMenus(parent);
+
+            if (BoolPref.ShowStaticMethods && property.GetGetMethod(true).IsStatic)
+            {
+                parent = parent.GetOrCreateSubMenu("Static");
+            }
+            if (BoolPref.GroupProperties)
+            {
+                parent = parent.GetOrCreateSubMenu("Properties");
+            }
+            if (BoolPref.GroupNonPublics && !IsPublic(property))
+            {
+                parent = parent.GetOrCreateSubMenu("Non-Public Properties");
+            }
+
+            return parent;
         }
 
-        private static void AppendDeclaringTypeSubMenu(StringBuilder text, Type declaringType, Type currentType)
+        private static void CreateSubMenus(CustomDropDownItem parent)
         {
-            if (BoolPref.SubMenuForEachBaseType)
+            //All logic for creating all submenu's (nested) and its seperators
+
+            if (parent.subMenuGenerated) return;
+
+            if (BoolPref.ShowStaticMethods)
             {
-                if (BoolPref.SubMenuForRootBaseType || declaringType != currentType)
+                //Static
+                CustomDropDownItem staticParent = parent.GetOrCreateSubMenu("Static", false);
+                if (!(BoolPref.GroupMethods || BoolPref.GroupProperties))
                 {
-                    text.Append(declaringType.GetNameCS());
-                    text.Append(" ->/");
+                    if (!BoolPref.GroupNonPublics)
+                    {
+                        parent.AddSeperator();
+                    }
+                }
+
+                //Static/Methods
+                if (BoolPref.GroupMethods)
+                {
+                    CustomDropDownItem staticMethodsParent = staticParent.GetOrCreateSubMenu("Methods", false);
+                    if (BoolPref.GroupMethods && !BoolPref.GroupProperties) staticParent.AddSeperator();
+                    //Static/Methods/Non-Public Methods
+                    if (BoolPref.ShowNonPublics && BoolPref.GroupNonPublics)
+                    {
+                        staticMethodsParent.GetOrCreateSubMenu("Non-Public Methods", false);
+                        if (!BoolPref.GroupProperties) staticMethodsParent.AddSeperator();
+                    }
+                }
+                //Static/Properties
+                if (BoolPref.GroupProperties)
+                {
+                    CustomDropDownItem staticPropertiesParent = staticParent.GetOrCreateSubMenu("Properties", false);
+                    if (BoolPref.GroupProperties) staticParent.AddSeperator();
+                    //Static/Properties/Non-Public Properties
+                    if (BoolPref.ShowNonPublics && BoolPref.GroupNonPublics)
+                    {
+                        staticPropertiesParent.GetOrCreateSubMenu("Non-Public Properties", false);
+                        staticPropertiesParent.AddSeperator();
+                    }
+                }
+
+            }
+
+            //Methods
+            if (BoolPref.GroupMethods)
+            {
+                CustomDropDownItem methodsParent = parent.GetOrCreateSubMenu("Methods", false);
+                if (BoolPref.GroupMethods && !BoolPref.GroupProperties && !BoolPref.GroupNonPublics) parent.AddSeperator();
+                //Methods/Non-Public Methods
+                if (BoolPref.ShowNonPublics && BoolPref.GroupNonPublics)
+                {
+                    methodsParent.GetOrCreateSubMenu("Non-Public Methods", false);
+                    methodsParent.AddSeperator();
                 }
             }
-        }
-
-        /************************************************************************************************************************/
-
-        private static void AddSelectPropertyItem(string prefix, Object[] targets, Type currentType, PropertyInfo property, MethodInfo getter)
-        {
-            var defaultMethod = getter;
-
-            MethodInfo setter = null;
-            if (IsSupported(property.PropertyType))
+            //Non-Public Methods
+            else if (BoolPref.ShowNonPublics)
             {
-                setter = property.GetSetMethod(true);
-                if (setter != null)
-                    defaultMethod = setter;
+
+                if (BoolPref.GroupNonPublics)
+                {
+                    parent.GetOrCreateSubMenu("Non-Public Methods", false);
+                }
             }
 
-            LabelBuilder.Length = 0;
-            LabelBuilder.Append(prefix);
+            //Properties
+            if (BoolPref.GroupProperties)
+            {
+                CustomDropDownItem propertiesParent = parent.GetOrCreateSubMenu("Properties", false);
+                if (BoolPref.GroupProperties) parent.AddSeperator();
+                //Properties/Non-Public Properties
+                if (BoolPref.ShowNonPublics && BoolPref.GroupNonPublics)
+                {
+                    propertiesParent.GetOrCreateSubMenu("Non-Public Properties", false);
+                    propertiesParent.AddSeperator();
+                }
+            }
+            //Non-Public Properties
+            else if (BoolPref.ShowNonPublics)
+            {
+                if (BoolPref.GroupNonPublics)
+                {
+                    parent.GetOrCreateSubMenu("Non-Public Properties", false);
+                    parent.AddSeperator();
+                }
+            }
 
-            // Declaring Type.
-            AppendDeclaringTypeSubMenu(LabelBuilder, property.DeclaringType, currentType);
 
-            // Non-Public Grouping.
-            if (BoolPref.GroupNonPublicMethods && !IsPublic(property))
-                LabelBuilder.Append("Non-Public Properties ->/");
-
-            // Property Type and Name.
-            LabelBuilder.Append(property.PropertyType.GetNameCS(BoolPref.ShowFullTypeNames));
-            LabelBuilder.Append(' ');
-            LabelBuilder.Append(property.Name);
-
-            // Get and Set.
-            LabelBuilder.Append(" { ");
-            if (getter != null) LabelBuilder.Append("get; ");
-            if (setter != null) LabelBuilder.Append("set; ");
-            LabelBuilder.Append('}');
-
-            var label = LabelBuilder.ToString();
-            AddSetCallItem(label, defaultMethod, targets);
+            parent.subMenuGenerated = true;
         }
+
 
         /************************************************************************************************************************/
 
-        private static void AddSelectMethodItem(string prefix, Object[] targets, Type currentType, bool methodNameSubMenu,
-            MethodBase method, ParameterInfo[] parameters)
+        private static void AddSetCallItem(CustomDropDownItem itemParent, MethodBase method, Object[] targets, string label)
         {
-            LabelBuilder.Length = 0;
-            LabelBuilder.Append(prefix);
-
-            // Declaring Type.
-            AppendDeclaringTypeSubMenu(LabelBuilder, method.DeclaringType, currentType);
-
-            // Non-Public Grouping.
-            if (BoolPref.GroupNonPublicMethods && !IsPublic(method))
-                LabelBuilder.Append("Non-Public Methods ->/");
-
-            // Overload Grouping.
-            if (methodNameSubMenu)
-                LabelBuilder.Append(method.Name).Append(" ->/");
-
-            // Method Signature.
-            LabelBuilder.Append(GetMethodSignature(method, parameters, true));
-
-            var label = LabelBuilder.ToString();
-
-            AddSetCallItem(label, method, targets);
-        }
-
-        /************************************************************************************************************************/
-
-        private static void AddSetCallItem(string label, MethodBase method, Object[] targets)
-        {
-            _Menu.AddItem(
-                new GUIContent(label),
-                method == _CurrentMethod,
+            itemParent.AddItem(
+                new CustomDropDownItem(label,
                 (userData) =>
                 {
                     DrawerState.Current.CopyFrom(CachedState);
@@ -636,7 +808,7 @@ namespace UltEvents.Editor
 
                     DrawerState.Current.Clear();
                 },
-                null);
+                method == _CurrentMethod));
         }
 
         /************************************************************************************************************************/
@@ -725,7 +897,7 @@ namespace UltEvents.Editor
             }
 
             // Non-Public Sub-Menu.
-            if (BoolPref.GroupNonPublicMethods)
+            if (BoolPref.GroupNonPublics)
             {
                 if (IsPublic(a))
                 {
