@@ -28,6 +28,18 @@ namespace UltEvents
         public Object Target
         {
             get { return _Target; }
+            private set {
+                _Target = value;
+                _TargetName = value.ToString();
+            }
+        }
+
+        [SerializeField]
+        private string _TargetName;
+
+        /// <summary>The name of the object on which the persistent method is called.</summary>
+        public string TargetName {
+            get { return _TargetName; }
         }
 
         /************************************************************************************************************************/
@@ -144,14 +156,14 @@ namespace UltEvents
         public void SetMethod(MethodBase method, Object target)
         {
             _Method = method;
-            _Target = target;
+            Target = target;
 
             if (method != null)
             {
                 if (method.IsStatic || method.IsConstructor)
                 {
                     _MethodName = UltEventUtils.GetFullyQualifiedName(method);
-                    _Target = null;
+                    Target = null;
                 }
                 else _MethodName = method.Name;
 
@@ -271,7 +283,7 @@ namespace UltEvents
                 return _Method.Invoke(null, parameters);
 #endif
 
-            return _Method.Invoke(_Target, parameters);
+            return _Method.Invoke(Target, parameters);
         }
 
         /************************************************************************************************************************/
@@ -316,11 +328,11 @@ namespace UltEvents
             // Sometimes Unity ends up with an old reference to an object where the reference thinks it has been
             // destroyed even though it hasn't and it still has a value Instance ID. So we just get a new reference.
 
-            if (_Target == null && !ReferenceEquals(_Target, null))
-                _Target = UnityEditor.EditorUtility.InstanceIDToObject(_Target.GetInstanceID());
+            if (Target == null && !ReferenceEquals(Target, null))
+                Target = UnityEditor.EditorUtility.InstanceIDToObject(Target.GetInstanceID());
 #endif
 
-            GetMethodDetails(_MethodName, _Target, out declaringType, out methodName);
+            GetMethodDetails(_MethodName, Target, out declaringType, out methodName);
         }
 
         internal static void GetMethodDetails(string serializedMethodName, Object target, out Type declaringType, out string methodName)
@@ -396,7 +408,7 @@ namespace UltEvents
         /// <summary>Copies the contents of the `target` call to this call.</summary>
         public void CopyFrom(PersistentCall target)
         {
-            _Target = target._Target;
+            Target = target.Target;
             _MethodName = target._MethodName;
             _Method = target._Method;
 
@@ -423,7 +435,7 @@ namespace UltEvents
             text.Append("PersistentCall: MethodName=");
             text.Append(_MethodName);
             text.Append(", Target=");
-            text.Append(_Target != null ? _Target.ToString() : "null");
+            text.Append(Target != null ? Target.ToString() : "null");
             text.Append(", PersistentArguments=");
             UltEventUtils.AppendDeepToString(text, _PersistentArguments.GetEnumerator(), "\n        ");
         }

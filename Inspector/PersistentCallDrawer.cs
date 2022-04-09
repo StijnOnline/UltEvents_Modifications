@@ -383,6 +383,11 @@ namespace UltEvents.Editor
                         out declaringType, out label);
                     DoMethodNameSuggestionGUI(ref area, declaringType, methodName);
                     GUI.color = ErrorFieldColor;
+
+                    //Show previous target object name if object no longer available
+                    if ( DrawerState.Current.TargetProperty.objectReferenceValue == null && DrawerState.Current.call != null ) {
+                        label = $"WAS: {DrawerState.Current.call.TargetName}.{label} ";
+                    }
                 }
 
                 if (autoOpenMethodMenu || (GUI.Button(area, GUIContent.none, PopupButtonStyle) && Event.current.button == 0))
