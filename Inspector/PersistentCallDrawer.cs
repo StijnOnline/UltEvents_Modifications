@@ -386,7 +386,7 @@ namespace UltEvents.Editor
 
                     //Show previous target object name if object no longer available
                     if ( DrawerState.Current.TargetProperty.objectReferenceValue == null && DrawerState.Current.call != null ) {
-                        label = $"WAS: {DrawerState.Current.call.TargetName}.{label} ";
+                        label = $"{DrawerState.Current.call.TargetName}.{label} ";
                     }
                 }
 
