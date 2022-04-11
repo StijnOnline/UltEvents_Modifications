@@ -488,8 +488,6 @@ namespace UltEvents.Editor
             var gameObjects = GetRelatedObjects(targets, (target) => (target as Component).gameObject);
 
             PopulateMenuForGameObject(true, gameObjects);
-
-            PopulateMenuForObject(targets);
         }
 
         /************************************************************************************************************************/
